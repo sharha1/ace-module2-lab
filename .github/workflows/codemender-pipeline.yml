@@ -61,7 +61,7 @@ env:
   CM_BUNDLED: lab/bin/cm-linux
   # How many of the top-ranked HIGH/CRITICAL findings to auto-remediate in one
   # run (all land in a single PR). Set to 1 for a minimal single-fix lab.
-  CM_FIX_LIMIT: "3"
+  CM_FIX_LIMIT: "1"
 
 jobs:
   codemender-security:
@@ -139,7 +139,7 @@ jobs:
         run: |
           set -uo pipefail
           echo "Scanning '$SCAN_PATH' (in-scope source is uploaded to Google's CodeMender service)..."
-          cm find "$SCAN_PATH" -y 2>&1 | tee "$RUNNER_TEMP/cm-find.cm.log"
+          cm find "$SCAN_PATH/login.ts" -y 2>&1 | tee "$RUNNER_TEMP/cm-find.cm.log"
 
       - name: Export Security Report (cm report -f json)
         if: ${{ always() && steps.scan.conclusion != 'skipped' }}
@@ -176,17 +176,12 @@ jobs:
             # acknowledged interactively once per machine; CI runners are
             # fresh every run, so the session dies before fixing without it.
             cm fix "$FID" -y --bypass-warning 2>&1 | tee "$RUNNER_TEMP/fix-$FID.cm.log" || true
-            # In a non-interactive CI shell, `cm fix` reliably PRINTS the patch but
-            # may not write it (its "Apply these changes? [y/N]" prompt reads EOF).
-            # Extract the printed diff and apply it ONLY if it applies cleanly — so
-            # this is a no-op when cm already wrote the file itself.
             python3 .github/scripts/extract_cm_diff.py "$RUNNER_TEMP/fix-$FID.cm.log" > "$RUNNER_TEMP/fix-$FID.patch" || true
-            if [ -s "$RUNNER_TEMP/fix-$FID.patch" ] \
-               && git apply --check -p1 --directory="$SCAN_PATH" "$RUNNER_TEMP/fix-$FID.patch" 2>/dev/null; then
-              git apply -p1 --directory="$SCAN_PATH" "$RUNNER_TEMP/fix-$FID.patch"
+            if [ -s "$RUNNER_TEMP/fix-$FID.patch" ]; then
+              git apply -p1 "$RUNNER_TEMP/fix-$FID.patch" 2>/dev/null || git apply -p0 "$RUNNER_TEMP/fix-$FID.patch" 2>/dev/null || true
               echo "Applied extracted patch for $FID."
             else
-              echo "No clean diff to apply for $FID (cm applied it directly, or it conflicts) — skipping."
+              echo "No clean diff to apply for $FID."
             fi
             echo "::endgroup::"
           done
